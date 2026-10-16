@@ -1,0 +1,104 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;height:100%;background:#EFEBE5;overflow:hidden;font-family:Inter,system-ui,sans-serif}
+  #c{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+  #c:active{cursor:grabbing}
+  .lbl{position:absolute;font-size:12px;color:#1F1D1B;background:rgba(255,255,255,.9);
+       padding:2px 7px;border-radius:6px;border:1px solid #E6E1DA;pointer-events:none;
+       transform:translate(-50%,-50%)}
+  #hint{position:absolute;left:12px;bottom:10px;font-size:11px;color:#6F6A64}
+  #note{position:absolute;right:12px;bottom:10px;font-size:11px;color:#6F6A64}
+</style></head>
+<body>
+<canvas id="c"></canvas>
+<div class="lbl" id="lw"></div><div class="lbl" id="lh"></div><div class="lbl" id="ld"></div>
+<div id="hint">Drag to rotate · scroll to zoom</div>
+<div id="note">Illustrative 3D preview, not a manufacturing drawing</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const D = __DESIGN__;           // integer mm, injected by Streamlit
+const S = 0.001;                // mm -> scene units (metres)
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0xEFEBE5);
+const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
+scene.add(new THREE.HemisphereLight(0xffffff, 0xcfc8bf, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8); sun.position.set(3,5,4); scene.add(sun);
+
+const W=D.width*S, H=D.height*S, Dp=D.depth*S, T=D.panel*S;
+const rough = D.finish==='gloss'?0.25:D.finish==='satin'?0.5:0.85;
+const matBody = new THREE.MeshStandardMaterial({color:D.color, roughness:rough});
+const matDoor = new THREE.MeshStandardMaterial({color:D.doorColor, roughness:rough, transparent:true, opacity:1});
+const matSel  = new THREE.MeshStandardMaterial({color:0xC8553D, transparent:true, opacity:0.28});
+const edge = new THREE.LineBasicMaterial({color:0x8a8178, transparent:true, opacity:.55});
+
+function box(w,h,d,x,y,z,mat){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+  m.position.set(x,y,z); scene.add(m);
+  if(mat!==matSel){
+    const l = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), edge);
+    l.position.copy(m.position); scene.add(l);
+  }
+  return m;
+}
+const cx=-W/2, cz=-Dp/2;
+box(T,H,Dp, cx+T/2, H/2, 0, matBody);           // left side
+box(T,H,Dp, cx+W-T/2, H/2, 0, matBody);         // right side
+box(W,T,Dp, 0, H-T/2, 0, matBody);              // top
+box(W,T,Dp, 0, T/2, 0, matBody);                // bottom
+box(W-2*T,H-2*T,T/2, 0, H/2, cz+T/4, matBody);  // back
+
+const n = D.compartments.length;
+const inner = W-2*T-(n-1)*T;
+const totalShare = D.compartments.reduce((a,c)=>a+c.share,0);
+let x = cx+T;
+D.compartments.forEach((c,i)=>{
+  const cw = inner*c.share/totalShare;
+  if(i===D.selected) box(cw, H-2*T, Dp-T, x+cw/2, H/2, T/2, matSel);
+  for(let s=1;s<=c.shelves;s++){
+    box(cw, T*0.8, Dp-T, x+cw/2, T+(H-2*T)*s/(c.shelves+1), T/2, matBody);
+  }
+  if(c.rail){
+    const r=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,cw,16),new THREE.MeshStandardMaterial({color:0x9a9a9a,metalness:.8,roughness:.3}));
+    r.rotation.z=Math.PI/2; r.position.set(x+cw/2,H*0.82,0); scene.add(r);
+  }
+  x += cw;
+  if(i<n-1){ box(T,H-2*T,Dp-T, x+T/2, H/2, T/2, matBody); x += T; }
+});
+
+if(D.doors==='hinged' && !D.showInterior){
+  const dw=(W-2*T)/n;
+  for(let i=0;i<n;i++) box(dw-0.004, H-2*T-0.004, T*0.7, cx+T+dw*(i+.5), H/2, Dp/2+T*0.35, matDoor);
+}else if(D.doors==='sliding' && !D.showInterior){
+  const k=Math.max(2,D.slidingPanels), dw=(W-2*T)/k+0.03;
+  for(let i=0;i<k;i++) box(dw, H-2*T-0.004, T*0.6, cx+T+(W-2*T)/k*(i+.5), H/2, Dp/2+T*0.3+(i%2)*T*0.7, matDoor);
+}
+
+const floor=new THREE.Mesh(new THREE.CircleGeometry(2.6,48),new THREE.MeshBasicMaterial({color:0xE2DCD3}));
+floor.rotation.x=-Math.PI/2; floor.position.y=-0.001; scene.add(floor);
+
+// Minimal orbit. Camera eases toward its targets, so release keeps a little momentum.
+let az=0.6, el=0.22, dist=Math.max(W,H)*2.1, tAz=az, tEl=el, tDist=dist, drag=false, lx=0, ly=0;
+canvas.addEventListener('pointerdown',e=>{drag=true;lx=e.clientX;ly=e.clientY;canvas.setPointerCapture(e.pointerId)});
+canvas.addEventListener('pointerup',()=>drag=false);
+canvas.addEventListener('pointermove',e=>{ if(!drag) return;
+  tAz-=(e.clientX-lx)*0.008; tEl=Math.max(-0.1,Math.min(1.2,tEl+(e.clientY-ly)*0.006)); lx=e.clientX; ly=e.clientY;});
+canvas.addEventListener('wheel',e=>{e.preventDefault(); tDist=Math.max(1.2,Math.min(9,tDist*(1+e.deltaY*0.001)));},{passive:false});
+
+const lw=document.getElementById('lw'), lh=document.getElementById('lh'), ld=document.getElementById('ld');
+lw.textContent=(D.width/10).toFixed(1)+' cm'; lh.textContent=(D.height/10).toFixed(1)+' cm'; ld.textContent=(D.depth/10).toFixed(1)+' cm';
+function place(el,v){const p=v.clone().project(cam); el.style.left=((p.x+1)/2*canvas.clientWidth)+'px'; el.style.top=((1-p.y)/2*canvas.clientHeight)+'px';}
+function resize(){const w=canvas.clientWidth,h=canvas.clientHeight; if(canvas.width!==Math.round(w*renderer.getPixelRatio())){renderer.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();}}
+function tick(){
+  resize();
+  az+=(tAz-az)*0.18; el+=(tEl-el)*0.18; dist+=(tDist-dist)*0.18;
+  cam.position.set(Math.sin(az)*Math.cos(el)*dist, H/2+Math.sin(el)*dist, Math.cos(az)*Math.cos(el)*dist);
+  cam.lookAt(0,H/2,0);
+  renderer.render(scene,cam);
+  place(lw,new THREE.Vector3(0,-0.05,Dp/2)); place(lh,new THREE.Vector3(cx-0.08,H/2,Dp/2)); place(ld,new THREE.Vector3(cx+W+0.08,0.05,0));
+  requestAnimationFrame(tick);
+}
+tick();
+</script></body></html>
