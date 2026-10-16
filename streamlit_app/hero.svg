@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 560">
+  <circle cx="270" cy="300" r="210" fill="#E9EFE6"/>
+  <rect x="120" y="70" width="300" height="410" rx="3" fill="#FBFAF8" stroke="#1F1D1B" stroke-width="1.6"/>
+  <line x1="220" y1="70" x2="220" y2="480" stroke="#1F1D1B" stroke-width="1.2"/>
+  <line x1="320" y1="70" x2="320" y2="480" stroke="#1F1D1B" stroke-width="1.2"/>
+  <rect x="204" y="250" width="3" height="34" rx="1.5" fill="#1F1D1B"/>
+  <rect x="233" y="250" width="3" height="34" rx="1.5" fill="#1F1D1B"/>
+  <rect x="304" y="250" width="3" height="34" rx="1.5" fill="#1F1D1B"/>
+  <rect x="333" y="250" width="3" height="34" rx="1.5" fill="#1F1D1B"/>
+  <rect x="120" y="480" width="300" height="10" fill="#D9CBB4" stroke="#1F1D1B" stroke-width="1.2"/>
+  <line x1="60" y1="490" x2="480" y2="490" stroke="#1F1D1B" stroke-width="1" opacity=".35"/>
+  <g stroke="#C8553D" stroke-width="1.2" fill="none">
+    <line x1="120" y1="518" x2="420" y2="518"/><line x1="120" y1="511" x2="120" y2="525"/><line x1="420" y1="511" x2="420" y2="525"/>
+    <line x1="456" y1="70" x2="456" y2="480"/><line x1="449" y1="70" x2="463" y2="70"/><line x1="449" y1="480" x2="463" y2="480"/>
+  </g>
+  <text x="270" y="540" text-anchor="middle" font-size="13" fill="#C8553D">200 cm</text>
+  <text x="478" y="282" font-size="13" fill="#C8553D">240</text>
+</svg>

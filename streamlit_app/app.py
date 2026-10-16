@@ -18,6 +18,7 @@ import streamlit as st
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))  # so `room` imports however the app is launched
 
+import landing  # noqa: E402
 import room as rm  # noqa: E402
 
 # ---- Canonical design (integer mm). Defaults are configurable prototype values. ----
@@ -52,6 +53,7 @@ def init_state() -> None:
     ss.setdefault("design", default_design())
     ss.setdefault("revision", 0)
     ss.setdefault("selected", 0)
+    ss.setdefault("page", "landing")
     ss.setdefault("sel_item", 0)
     ss.setdefault("view_mode", "Wardrobe")
     ss.setdefault("show_interior", False)
@@ -373,11 +375,18 @@ def properties_panel() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="BanAI · Wardrobe Designer", page_icon="🗄️", layout="wide")
-    css()
     init_state()
+    if st.session_state.page == "landing":
+        landing.render()
+        return
+    css()
 
-    st.markdown('<div class="brand"><h1>BanAI</h1><span>AI wardrobe designer · prototype UI</span></div>',
+    h1, h2 = st.columns([6, 1], vertical_alignment="center")
+    h1.markdown('<div class="brand"><h1>BanAI</h1><span>AI wardrobe designer · prototype UI</span></div>',
                 unsafe_allow_html=True)
+    if h2.button("← Home", use_container_width=True, key="home"):
+        st.session_state.page = "landing"
+        st.rerun()
     left, center, right = st.columns([1.05, 2.1, 1.15], gap="medium")
     with left:
         chat_panel()
