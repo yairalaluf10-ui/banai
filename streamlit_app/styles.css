@@ -53,6 +53,21 @@ header[data-testid="stHeader"] { background: transparent; }
 .proposal li:nth-child(3) { transition-delay: 100ms; }
 .proposal li:nth-child(n+4) { transition-delay: 150ms; }
 
+/* Layout hints under the room view: enter like messages, stagger 50ms */
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem; }
+.chip {
+  font-size: 0.82rem; border-radius: 999px; padding: 0.25rem 0.7rem;
+  border: 1px solid var(--line); background: var(--card);
+  opacity: 1; transform: translateY(0);
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+  @starting-style { opacity: 0; transform: translateY(6px); }
+}
+.chip.warn { border-color: var(--accent); background: #FFF1EC; color: #9A3A26; }
+.chip.ok { border-color: #BFD8C7; background: #F1F8F3; color: #2F6B45; }
+.chip:nth-child(2) { transition-delay: 50ms; }
+.chip:nth-child(3) { transition-delay: 100ms; }
+.chip:nth-child(n+4) { transition-delay: 150ms; }
+
 /* Buttons: explicit properties (never `transition: all`), press feedback scale(0.97) */
 .stButton > button {
   border-radius: 10px; border: 1px solid var(--line); background: var(--card);
@@ -73,7 +88,7 @@ iframe { border-radius: 14px; border: 1px solid var(--line); }
 
 /* Reduced motion: keep the opacity fade (it aids comprehension), drop the movement */
 @media (prefers-reduced-motion: reduce) {
-  .msg, .proposal, .proposal li {
+  .msg, .proposal, .proposal li, .chip {
     transform: none !important;
     transition-property: opacity !important;
     @starting-style { opacity: 0; transform: none; }

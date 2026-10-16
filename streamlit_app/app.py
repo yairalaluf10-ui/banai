@@ -10,11 +10,15 @@ Run:  streamlit run app.py
 import copy
 import json
 import re
+import sys
 from pathlib import Path
 
 import streamlit as st
 
 HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE))  # so `room` imports however the app is launched
+
+import room as rm  # noqa: E402
 
 # ---- Canonical design (integer mm). Defaults are configurable prototype values. ----
 COLORS = {
@@ -39,6 +43,7 @@ def default_design() -> dict:
             {"share": 1.0, "shelves": 0, "rail": True},
             {"share": 1.0, "shelves": 2, "rail": False},
         ],
+        "room": rm.default_room(),
     }
 
 
@@ -47,6 +52,8 @@ def init_state() -> None:
     ss.setdefault("design", default_design())
     ss.setdefault("revision", 0)
     ss.setdefault("selected", 0)
+    ss.setdefault("sel_item", 0)
+    ss.setdefault("view_mode", "Wardrobe")
     ss.setdefault("show_interior", False)
     ss.setdefault("pending", None)
     ss.setdefault("chat", [("ai", "Describe the wardrobe you want, for example "
@@ -124,6 +131,38 @@ def build_proposal(text: str, design: dict):
             changes["finish"] = f; labels.append(f"Finish: {f}")
             break
 
+    # ---- room: size, wall placement, adding furniture ----
+    room = copy.deepcopy(design["room"])
+    room_changed = False
+    m = re.search(r"room\s*(\d+(?:\.\d+)?)\s*(?:x|×|by)\s*(\d+(?:\.\d+)?)", t)
+    if m:
+        def to_mm(v):
+            v = float(v)
+            return int(round(v * 1000)) if v <= 30 else int(round(v * 10))
+        rw, rd = to_mm(m.group(1)), to_mm(m.group(2))
+        if 1500 <= rw <= 12000 and 1500 <= rd <= 12000:
+            room["width"], room["depth"] = rw, rd
+            room_changed = True
+            labels.append(f"Room size {rw / 10:g} × {rd / 10:g} cm")
+    m = re.search(r"(back|left|right|front)\s*wall", t)
+    if m and ("wardrobe" in t or "closet" in t or "place" in t or "put" in t or "move" in t):
+        temp = {**design, **changes}
+        room["wardrobe"] = rm.snap_wardrobe(temp, room, m.group(1))
+        room_changed = True
+        labels.append(f"Place the wardrobe against the {m.group(1)} wall")
+    elif "center of the room" in t or "middle of the room" in t:
+        room["wardrobe"] = rm.center_wardrobe({**design, **changes}, room)
+        room_changed = True
+        labels.append("Place the wardrobe in the middle of the room")
+    for name in rm.PRESETS:
+        kw = name.split(" (")[0].lower()
+        if re.search(rf"\badd (?:a |an )?{kw}\b", t):
+            room["items"].append(rm.make_item(name, room["width"] // 2, room["depth"] // 2))
+            room_changed = True
+            labels.append(f"Add {kw} to the room (move it under Room & placement)")
+    if room_changed:
+        changes["room"] = room
+
     if not labels:
         return None
     return {"changes": changes, "labels": labels, "baseRevision": st.session_state.revision}
@@ -134,6 +173,8 @@ def apply_proposal(p: dict) -> bool:
         return False  # stale
     new = copy.deepcopy(st.session_state.design)
     new.update(copy.deepcopy(p["changes"]))
+    if "room" in p["changes"]:
+        st.session_state.view_mode = "In room"
     commit(new)
     return True
 
@@ -144,15 +185,28 @@ def css() -> None:
 
 
 def viewer(design: dict) -> None:
+    wardrobe = {k: v for k, v in design.items() if k != "room"}
     payload = {
-        **design,
+        **wardrobe,
         "color": COLORS[design["color"]],
         "doorColor": COLORS[design["doorColor"]],
         "selected": st.session_state.selected,
         "showInterior": st.session_state.show_interior,
     }
-    html = (HERE / "viewer.html").read_text(encoding="utf-8").replace("__DESIGN__", json.dumps(payload))
+    room_payload = None
+    if st.session_state.view_mode == "In room":
+        room = {**design["room"], "selectedItem": st.session_state.sel_item}
+        room_payload = rm.viewer_payload(design, room)
+    html = (HERE / "viewer.html").read_text(encoding="utf-8")
+    html = html.replace("__DESIGN__", json.dumps(payload)).replace("__ROOM__", json.dumps(room_payload))
     st.iframe(html, height=640)
+
+
+def layout_hints(design: dict) -> None:
+    items = rm.check(design, design["room"])
+    chips = "".join(
+        f'<div class="chip {"warn" if lvl == "warn" else "ok"}">{msg}</div>' for lvl, msg in items)
+    st.markdown(f'<div class="chips">{chips}</div>', unsafe_allow_html=True)
 
 
 def chat_panel() -> None:
@@ -193,10 +247,77 @@ def chat_panel() -> None:
         st.rerun()
 
 
-def mm_input(label: str, key: str, value_mm: int, lo: int, hi: int) -> int:
+def mm_input(label: str, key: str, value_mm: int, lo: int, hi: int, step: float = 0.5) -> int:
+    lo, hi = min(lo, value_mm), max(hi, value_mm)
     v = st.number_input(label, min_value=lo / 10, max_value=hi / 10, value=value_mm / 10,
-                        step=0.5, format="%.1f", key=key)
+                        step=step, format="%.1f", key=key)
     return int(round(v * 10))
+
+
+def room_panel(d: dict) -> None:
+    r, rev = d["room"], st.session_state.revision
+    with st.expander("Room & placement", expanded=st.session_state.view_mode == "In room"):
+        st.caption("Room size (cm)")
+        c1, c2, c3 = st.columns(3)
+        with c1: r["width"] = mm_input("Width", f"rw{rev}", r["width"], 1500, 12000, 10.0)
+        with c2: r["depth"] = mm_input("Depth", f"rd{rev}", r["depth"], 1500, 12000, 10.0)
+        with c3: r["height"] = mm_input("Height", f"rh{rev}", r["height"], 2000, 4000, 5.0)
+
+        st.caption("Wardrobe position")
+        wd = r["wardrobe"]
+        snap = st.columns(5)
+        for col, (label, wall) in zip(snap[:4], [("Back", "back"), ("Left", "left"), ("Right", "right"), ("Front", "front")]):
+            if col.button(label, use_container_width=True, key=f"snap_{wall}{rev}"):
+                r["wardrobe"] = rm.snap_wardrobe(d, r, wall); commit(d); st.rerun()
+        if snap[4].button("Mid", use_container_width=True, key=f"snapc{rev}"):
+            r["wardrobe"] = rm.center_wardrobe(d, r); commit(d); st.rerun()
+        p1, p2, p3 = st.columns(3)
+        with p1: wd["x"] = mm_input("X", f"wx{rev}", wd["x"], 0, r["width"], 5.0)
+        with p2: wd["z"] = mm_input("Z", f"wz{rev}", wd["z"], 0, r["depth"], 5.0)
+        with p3: wd["rot"] = st.selectbox("Facing", rm.ROTATIONS, index=rm.ROTATIONS.index(wd["rot"]),
+                                          format_func=lambda v: f"{v}°", key=f"wr{rev}")
+
+        st.caption("Furniture")
+        items = r["items"]
+        if items:
+            i = min(st.session_state.sel_item, len(items) - 1)
+            st.session_state.sel_item = st.selectbox(
+                "Selected", range(len(items)), index=i, key=f"si{rev}",
+                format_func=lambda k: f"{k + 1}. {items[k]['name']}")
+            it = items[st.session_state.sel_item]
+            q1, q2, q3 = st.columns(3)
+            with q1: it["x"] = mm_input("X", f"ix{rev}_{it['id']}", it["x"], 0, r["width"], 5.0)
+            with q2: it["z"] = mm_input("Z", f"iz{rev}_{it['id']}", it["z"], 0, r["depth"], 5.0)
+            with q3: it["rot"] = st.selectbox("Facing", rm.ROTATIONS, index=rm.ROTATIONS.index(it["rot"]),
+                                              format_func=lambda v: f"{v}°", key=f"ir{rev}_{it['id']}")
+            s1, s2, s3 = st.columns(3)
+            with s1: it["w"] = mm_input("Width", f"iw{rev}_{it['id']}", it["w"], 100, 4000, 5.0)
+            with s2: it["d"] = mm_input("Depth", f"id{rev}_{it['id']}", it["d"], 100, 4000, 5.0)
+            with s3: it["h"] = mm_input("Height", f"ih{rev}_{it['id']}", it["h"], 100, 3000, 5.0)
+            if st.button("Remove item", use_container_width=True, key=f"rmi{rev}_{it['id']}"):
+                items.pop(st.session_state.sel_item); st.session_state.sel_item = 0
+                commit(d); st.rerun()
+        a, b = st.columns([2, 1])
+        preset = a.selectbox("Add", list(rm.PRESETS), key=f"preset{rev}", label_visibility="collapsed")
+        if b.button("Add", use_container_width=True, key=f"addi{rev}"):
+            items.append(rm.make_item(preset, r["width"] // 2, r["depth"] // 2))
+            st.session_state.sel_item = len(items) - 1
+            commit(d); st.rerun()
+
+        st.caption("Doors and windows")
+        for k, o in enumerate(r["openings"]):
+            o1, o2, o3, o4 = st.columns([1.2, 1.2, 1, 1])
+            with o1: o["type"] = st.selectbox("Type", rm.OPENING_TYPES, index=rm.OPENING_TYPES.index(o["type"]),
+                                              key=f"ot{rev}_{o['id']}", label_visibility="collapsed")
+            with o2: o["wall"] = st.selectbox("Wall", rm.WALLS, index=rm.WALLS.index(o["wall"]),
+                                              key=f"ow{rev}_{o['id']}", label_visibility="collapsed")
+            with o3: o["offset"] = mm_input("From corner", f"oo{rev}_{o['id']}", o["offset"], 0, 12000, 5.0)
+            with o4: o["width"] = mm_input("Width", f"ow2{rev}_{o['id']}", o["width"], 300, 4000, 5.0)
+            if st.button("Remove", key=f"orm{rev}_{o['id']}"):
+                r["openings"].pop(k); commit(d); st.rerun()
+        if st.button("Add door or window", use_container_width=True, key=f"oadd{rev}"):
+            r["openings"].append({"id": rm.new_id("opn"), "type": "window", "wall": "back", "offset": 2400, "width": 1200})
+            commit(d); st.rerun()
 
 
 def properties_panel() -> None:
@@ -240,6 +361,8 @@ def properties_panel() -> None:
             d["compartments"].pop(i); st.session_state.selected = 0
             commit(d); st.rerun()
 
+    room_panel(d)
+
     if d != st.session_state.design:
         commit(d)
         st.rerun()
@@ -260,8 +383,15 @@ def main() -> None:
         chat_panel()
     with center:
         st.markdown('<div class="panel-title">3D View</div>', unsafe_allow_html=True)
-        st.session_state.show_interior = st.toggle("Show interior", value=st.session_state.show_interior)
+        v1, v2 = st.columns([1.3, 1])
+        with v1:
+            st.segmented_control("View", ["Wardrobe", "In room"], key="view_mode", label_visibility="collapsed",
+                                 selection_mode="single")
+        with v2:
+            st.session_state.show_interior = st.toggle("Show interior", value=st.session_state.show_interior)
         viewer(st.session_state.design)
+        if st.session_state.view_mode == "In room":
+            layout_hints(st.session_state.design)
     with right:
         properties_panel()
 
