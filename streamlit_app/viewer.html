@@ -79,26 +79,46 @@ if(D.doors==='hinged' && !D.showInterior){
 const floor=new THREE.Mesh(new THREE.CircleGeometry(2.6,48),new THREE.MeshBasicMaterial({color:0xE2DCD3}));
 floor.rotation.x=-Math.PI/2; floor.position.y=-0.001; scene.add(floor);
 
-// Minimal orbit. Camera eases toward its targets, so release keeps a little momentum.
-let az=0.6, el=0.22, dist=Math.max(W,H)*2.1, tAz=az, tEl=el, tDist=dist, drag=false, lx=0, ly=0;
-canvas.addEventListener('pointerdown',e=>{drag=true;lx=e.clientX;ly=e.clientY;canvas.setPointerCapture(e.pointerId)});
-canvas.addEventListener('pointerup',()=>drag=false);
-canvas.addEventListener('pointermove',e=>{ if(!drag) return;
-  tAz-=(e.clientX-lx)*0.008; tEl=Math.max(-0.1,Math.min(1.2,tEl+(e.clientY-ly)*0.006)); lx=e.clientX; ly=e.clientY;});
-canvas.addEventListener('wheel',e=>{e.preventDefault(); tDist=Math.max(1.2,Math.min(9,tDist*(1+e.deltaY*0.001)));},{passive:false});
+// Minimal orbit. Camera eases toward its targets (time-based, so 60Hz and 120Hz feel the same).
+// Streamlit rebuilds this iframe on every edit; the camera is saved so the view doesn't snap back.
+const KEY = 'banai.camera';
+let az=0.6, el=0.22, dist=Math.max(W,H)*2.1;
+// sessionStorage can be blocked in a sandboxed iframe; window.name survives a srcdoc swap on the same iframe.
+function load(){ try { return JSON.parse(sessionStorage.getItem(KEY)); } catch (e) {}
+  try { if (window.name.startsWith(KEY+'=')) return JSON.parse(window.name.slice(KEY.length+1)); } catch (e) {} return null; }
+{ const c = load(); if (c) { az=c.az; el=c.el; dist=c.dist; } }
+let tAz=az, tEl=el, tDist=dist, dragId=null, lx=0, ly=0, last=performance.now(), awake=true;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wake = () => { awake = true; };
+const save = () => { const v = JSON.stringify({az:tAz, el:tEl, dist:tDist});
+  try { sessionStorage.setItem(KEY, v); } catch (e) {}
+  try { window.name = KEY+'='+v; } catch (e) {} };
+
+canvas.addEventListener('pointerdown',e=>{ if(dragId!==null) return;   // ignore extra fingers mid-drag
+  dragId=e.pointerId; lx=e.clientX; ly=e.clientY; canvas.setPointerCapture(e.pointerId); });
+const end = e => { if(e.pointerId===dragId){ dragId=null; save(); } };
+canvas.addEventListener('pointerup',end); canvas.addEventListener('pointercancel',end);
+canvas.addEventListener('pointermove',e=>{ if(e.pointerId!==dragId) return;
+  tAz-=(e.clientX-lx)*0.008; tEl=Math.max(-0.1,Math.min(1.2,tEl+(e.clientY-ly)*0.006)); lx=e.clientX; ly=e.clientY; save(); wake(); });
+canvas.addEventListener('wheel',e=>{e.preventDefault(); tDist=Math.max(1.2,Math.min(9,tDist*(1+e.deltaY*0.001))); save(); wake();},{passive:false});
+addEventListener('resize', wake);
 
 const lw=document.getElementById('lw'), lh=document.getElementById('lh'), ld=document.getElementById('ld');
 lw.textContent=(D.width/10).toFixed(1)+' cm'; lh.textContent=(D.height/10).toFixed(1)+' cm'; ld.textContent=(D.depth/10).toFixed(1)+' cm';
 function place(el,v){const p=v.clone().project(cam); el.style.left=((p.x+1)/2*canvas.clientWidth)+'px'; el.style.top=((1-p.y)/2*canvas.clientHeight)+'px';}
 function resize(){const w=canvas.clientWidth,h=canvas.clientHeight; if(canvas.width!==Math.round(w*renderer.getPixelRatio())){renderer.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();}}
-function tick(){
+function tick(now){
+  requestAnimationFrame(tick);
+  if(!awake) return;                         // idle: no rendering at all
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  const k=reduce?1:1-Math.exp(-dt*14);
+  az+=(tAz-az)*k; el+=(tEl-el)*k; dist+=(tDist-dist)*k;
   resize();
-  az+=(tAz-az)*0.18; el+=(tEl-el)*0.18; dist+=(tDist-dist)*0.18;
   cam.position.set(Math.sin(az)*Math.cos(el)*dist, H/2+Math.sin(el)*dist, Math.cos(az)*Math.cos(el)*dist);
   cam.lookAt(0,H/2,0);
   renderer.render(scene,cam);
   place(lw,new THREE.Vector3(0,-0.05,Dp/2)); place(lh,new THREE.Vector3(cx-0.08,H/2,Dp/2)); place(ld,new THREE.Vector3(cx+W+0.08,0.05,0));
-  requestAnimationFrame(tick);
+  if(Math.abs(tAz-az)+Math.abs(tEl-el)+Math.abs(tDist-dist)<1e-4 && dragId===null) awake=false;
 }
-tick();
+requestAnimationFrame(tick);
 </script></body></html>
