@@ -1,0 +1,214 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;height:100%;background:#EFEBE5;overflow:hidden;font-family:Inter,system-ui,sans-serif}
+  #c{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+  #c:active{cursor:grabbing}
+  .lbl{position:absolute;font-size:12px;color:#1F1D1B;background:rgba(255,255,255,.9);
+       padding:2px 7px;border-radius:6px;border:1px solid #E6E1DA;pointer-events:none;
+       transform:translate(-50%,-50%);white-space:nowrap}
+  .lbl.item{font-size:11px;background:rgba(255,255,255,.78)}
+  .lbl.sel{border-color:#C8553D;color:#C8553D}
+  #hint{position:absolute;left:12px;bottom:10px;font-size:11px;color:#6F6A64}
+  #note{position:absolute;right:12px;bottom:10px;font-size:11px;color:#6F6A64}
+</style></head>
+<body>
+<canvas id="c"></canvas>
+<div id="labels"></div>
+<div id="hint">Drag to rotate · scroll to zoom</div>
+<div id="note">Illustrative 3D preview, not a manufacturing drawing</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const D = __DESIGN__;           // wardrobe design, integer mm, injected by Streamlit
+const R = __ROOM__;             // room layout (integer mm), or null when showing the wardrobe alone
+const S = 0.001;                // mm -> scene units (metres)
+const canvas = document.getElementById('c');
+const labelsEl = document.getElementById('labels');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0xEFEBE5);
+const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 80);
+scene.add(new THREE.HemisphereLight(0xffffff, 0xcfc8bf, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8); sun.position.set(3,5,4); scene.add(sun);
+
+const labels = [];   // {el, get: () => THREE.Vector3}
+function addLabel(text, cls, get){
+  const el = document.createElement('div'); el.className = 'lbl ' + (cls||''); el.textContent = text;
+  labelsEl.appendChild(el); labels.push({el, get});
+}
+
+const W=D.width*S, H=D.height*S, Dp=D.depth*S, T=D.panel*S;
+const rough = D.finish==='gloss'?0.25:D.finish==='satin'?0.5:0.85;
+const matBody = new THREE.MeshStandardMaterial({color:D.color, roughness:rough});
+const matDoor = new THREE.MeshStandardMaterial({color:D.doorColor, roughness:rough});
+const matSel  = new THREE.MeshStandardMaterial({color:0xC8553D, transparent:true, opacity:0.28});
+const edge = new THREE.LineBasicMaterial({color:0x8a8178, transparent:true, opacity:.55});
+
+// The wardrobe lives in a group so it can be placed and rotated inside a room.
+const root = new THREE.Group(); scene.add(root);
+function box(w,h,d,x,y,z,mat,parent){
+  const p = parent || root;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+  m.position.set(x,y,z); p.add(m);
+  if(mat!==matSel){
+    const l = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), edge);
+    l.position.copy(m.position); p.add(l);
+  }
+  return m;
+}
+const cx=-W/2, cz=-Dp/2;
+box(T,H,Dp, cx+T/2, H/2, 0, matBody);           // left side
+box(T,H,Dp, cx+W-T/2, H/2, 0, matBody);         // right side
+box(W,T,Dp, 0, H-T/2, 0, matBody);              // top
+box(W,T,Dp, 0, T/2, 0, matBody);                // bottom
+box(W-2*T,H-2*T,T/2, 0, H/2, cz+T/4, matBody);  // back
+
+const n = D.compartments.length;
+const inner = W-2*T-(n-1)*T;
+const totalShare = D.compartments.reduce((a,c)=>a+c.share,0);
+let x = cx+T;
+D.compartments.forEach((c,i)=>{
+  const cw = inner*c.share/totalShare;
+  if(i===D.selected) box(cw, H-2*T, Dp-T, x+cw/2, H/2, T/2, matSel);
+  for(let s=1;s<=c.shelves;s++){
+    box(cw, T*0.8, Dp-T, x+cw/2, T+(H-2*T)*s/(c.shelves+1), T/2, matBody);
+  }
+  if(c.rail){
+    const r=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,cw,16),new THREE.MeshStandardMaterial({color:0x9a9a9a,metalness:.8,roughness:.3}));
+    r.rotation.z=Math.PI/2; r.position.set(x+cw/2,H*0.82,0); root.add(r);
+  }
+  x += cw;
+  if(i<n-1){ box(T,H-2*T,Dp-T, x+T/2, H/2, T/2, matBody); x += T; }
+});
+
+if(D.doors==='hinged' && !D.showInterior){
+  const dw=(W-2*T)/n;
+  for(let i=0;i<n;i++) box(dw-0.004, H-2*T-0.004, T*0.7, cx+T+dw*(i+.5), H/2, Dp/2+T*0.35, matDoor);
+}else if(D.doors==='sliding' && !D.showInterior){
+  const k=Math.max(2,D.slidingPanels), dw=(W-2*T)/k+0.03;
+  for(let i=0;i<k;i++) box(dw, H-2*T-0.004, T*0.6, cx+T+(W-2*T)/k*(i+.5), H/2, Dp/2+T*0.3+(i%2)*T*0.7, matDoor);
+}
+
+// ---------- scene setup: wardrobe alone, or inside a room ----------
+let target = new THREE.Vector3(0, H/2, 0);
+let defaultDist = Math.max(W,H)*2.1, defaultEl = 0.22, maxDist = 9;
+
+if(!R){
+  const floor=new THREE.Mesh(new THREE.CircleGeometry(2.6,48),new THREE.MeshBasicMaterial({color:0xE2DCD3}));
+  floor.rotation.x=-Math.PI/2; floor.position.y=-0.001; scene.add(floor);
+  addLabel((D.width/10).toFixed(1)+' cm','',()=>new THREE.Vector3(0,-0.05,Dp/2));
+  addLabel((D.height/10).toFixed(1)+' cm','',()=>new THREE.Vector3(cx-0.08,H/2,Dp/2));
+  addLabel((D.depth/10).toFixed(1)+' cm','',()=>new THREE.Vector3(cx+W+0.08,0.05,0));
+}else{
+  const RW=R.width*S, RD=R.depth*S, RH=R.height*S;
+  const wx = mm => (mm - R.width/2)*S, wz = mm => (mm - R.depth/2)*S;   // room mm -> world
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(RW,RD), new THREE.MeshStandardMaterial({color:0xD9CFC0, roughness:.9}));
+  floor.rotation.x=-Math.PI/2; scene.add(floor);
+  // Walls are single-sided and face inward, so the ones between the camera and the room are culled.
+  const wallM = new THREE.MeshStandardMaterial({color:0xF3EFE9, roughness:1});
+  function wall(len, rotY, px, pz){
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(len,RH), wallM);
+    m.position.set(px, RH/2, pz); m.rotation.y = rotY; scene.add(m);
+    const l = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), edge);
+    l.position.copy(m.position); l.rotation.copy(m.rotation); scene.add(l);
+  }
+  wall(RW, 0, 0, -RD/2);              // back
+  wall(RW, Math.PI, 0, RD/2);         // front
+  wall(RD, Math.PI/2, -RW/2, 0);      // left
+  wall(RD, -Math.PI/2, RW/2, 0);      // right
+
+  // Doors and windows: flat panels just inside the wall
+  R.openings.forEach(o=>{
+    const w=o.width*S, h=R.openingHeight[o.type]*S, y=R.openingSill[o.type]*S+h/2;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w,h),
+      new THREE.MeshStandardMaterial({color:o.type==="door"?0xB08A62:0xBFD9E8, roughness:.6}));
+    const mid = o.offset+o.width/2;
+    if(o.wall==='back'){ m.position.set(wx(mid), y, -RD/2+0.004); }
+    else if(o.wall==='front'){ m.position.set(wx(mid), y, RD/2-0.004); m.rotation.y=Math.PI; }
+    else if(o.wall==='left'){ m.position.set(-RW/2+0.004, y, wz(mid)); m.rotation.y=Math.PI/2; }
+    else { m.position.set(RW/2-0.004, y, wz(mid)); m.rotation.y=-Math.PI/2; }
+    scene.add(m);
+    const l = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), new THREE.LineBasicMaterial({color:0x6F6A64}));
+    l.position.copy(m.position); l.rotation.copy(m.rotation); scene.add(l);
+  });
+
+  // Free-standing furniture
+  const itemColors = {bed:0xCBB8A0, nightstand:0xB89E80, desk:0xA98C6A, sofa:0x8FA3A6, armchair:0x9DB0A0,
+                      dresser:0xB39674, table:0xA98C6A, bookcase:0x8E7459};
+  R.items.forEach(it=>{
+    const g = new THREE.Group(); g.position.set(wx(it.x), 0, wz(it.z)); g.rotation.y = it.rot*Math.PI/180;
+    const mat = new THREE.MeshStandardMaterial({color:itemColors[it.kind]||0xB0A090, roughness:.8});
+    box(it.w*S, it.h*S, it.d*S, 0, it.h*S/2, 0, mat, g);
+    if(it.sel){
+      const hl = new THREE.Mesh(new THREE.BoxGeometry(it.w*S+.02, it.h*S+.02, it.d*S+.02),
+        new THREE.MeshBasicMaterial({color:0xC8553D, transparent:true, opacity:.22}));
+      hl.position.y = it.h*S/2; g.add(hl);
+    }
+    scene.add(g);
+    addLabel(it.name, it.sel?'item sel':'item', ()=>new THREE.Vector3(wx(it.x), it.h*S+0.12, wz(it.z)));
+  });
+
+  // Wardrobe placement
+  root.position.set(wx(R.wardrobe.x), 0, wz(R.wardrobe.z));
+  root.rotation.y = R.wardrobe.rot*Math.PI/180;
+  root.updateMatrixWorld(true);
+  addLabel('Wardrobe '+(D.width/10).toFixed(0)+' × '+(D.depth/10).toFixed(0)+' cm','sel',
+           ()=>root.localToWorld(new THREE.Vector3(0, H+0.12, 0)));
+
+  // Access zone in front of the wardrobe (door swing / standing room): green when free, red when blocked
+  const z=R.zone, zw=(z.x1-z.x0)*S, zd=(z.z1-z.z0)*S;
+  const zone = new THREE.Mesh(new THREE.PlaneGeometry(zw,zd),
+    new THREE.MeshBasicMaterial({color:z.blocked?0xC8553D:0x5E9C76, transparent:true, opacity:.28, side:THREE.DoubleSide}));
+  zone.rotation.x=-Math.PI/2; zone.position.set(wx((z.x0+z.x1)/2), 0.004, wz((z.z0+z.z1)/2)); scene.add(zone);
+
+  addLabel((R.width/10).toFixed(0)+' cm','',()=>new THREE.Vector3(0,0.02,RD/2+0.15));
+  addLabel((R.depth/10).toFixed(0)+' cm','',()=>new THREE.Vector3(RW/2+0.15,0.02,0));
+
+  target = new THREE.Vector3(0, RH*0.3, 0);
+  defaultDist = Math.max(RW,RD)*2.8; defaultEl = 0.8; maxDist = 20;
+}
+
+// ---------- camera ----------
+// Eases toward its targets (time-based, so 60Hz and 120Hz feel the same). Streamlit rebuilds this
+// iframe on every edit, so the view is saved and restored instead of snapping back.
+const KEY = 'banai.camera.' + (R ? 'room' : 'solo');
+let az=0.6, el=defaultEl, dist=defaultDist;
+function load(){ try { return JSON.parse(sessionStorage.getItem(KEY)); } catch (e) {}
+  try { if (window.name.startsWith(KEY+'=')) return JSON.parse(window.name.slice(KEY.length+1)); } catch (e) {} return null; }
+{ const c = load(); if (c) { az=c.az; el=c.el; dist=c.dist; } }
+let tAz=az, tEl=el, tDist=dist, dragId=null, lx=0, ly=0, last=performance.now(), awake=true;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wake = () => { awake = true; };
+const save = () => { const v = JSON.stringify({az:tAz, el:tEl, dist:tDist});
+  try { sessionStorage.setItem(KEY, v); } catch (e) {}
+  try { window.name = KEY+'='+v; } catch (e) {} };
+
+canvas.addEventListener('pointerdown',e=>{ if(dragId!==null) return;   // ignore extra fingers mid-drag
+  dragId=e.pointerId; lx=e.clientX; ly=e.clientY; canvas.setPointerCapture(e.pointerId); });
+const end = e => { if(e.pointerId===dragId){ dragId=null; save(); } };
+canvas.addEventListener('pointerup',end); canvas.addEventListener('pointercancel',end);
+canvas.addEventListener('pointermove',e=>{ if(e.pointerId!==dragId) return;
+  tAz-=(e.clientX-lx)*0.008; tEl=Math.max(-0.1,Math.min(1.35,tEl+(e.clientY-ly)*0.006)); lx=e.clientX; ly=e.clientY; save(); wake(); });
+canvas.addEventListener('wheel',e=>{e.preventDefault(); tDist=Math.max(1.2,Math.min(maxDist,tDist*(1+e.deltaY*0.001))); save(); wake();},{passive:false});
+addEventListener('resize', wake);
+
+function place(l){const p=l.get().project(cam);
+  l.el.style.display = p.z<1 ? 'block' : 'none';
+  l.el.style.left=((p.x+1)/2*canvas.clientWidth)+'px'; l.el.style.top=((1-p.y)/2*canvas.clientHeight)+'px';}
+function resize(){const w=canvas.clientWidth,h=canvas.clientHeight; if(canvas.width!==Math.round(w*renderer.getPixelRatio())){renderer.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();}}
+function tick(now){
+  requestAnimationFrame(tick);
+  if(!awake) return;                         // idle: no rendering at all
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  const k=reduce?1:1-Math.exp(-dt*14);
+  az+=(tAz-az)*k; el+=(tEl-el)*k; dist+=(tDist-dist)*k;
+  resize();
+  cam.position.set(target.x+Math.sin(az)*Math.cos(el)*dist, target.y+Math.sin(el)*dist, target.z+Math.cos(az)*Math.cos(el)*dist);
+  cam.lookAt(target);
+  renderer.render(scene,cam);
+  labels.forEach(place);
+  if(Math.abs(tAz-az)+Math.abs(tEl-el)+Math.abs(tDist-dist)<1e-4 && dragId===null) awake=false;
+}
+requestAnimationFrame(tick);
+</script></body></html>

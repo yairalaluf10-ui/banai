@@ -1,0 +1,97 @@
+/* Motion tokens (Emil Kowalski design-eng): strong custom curves, UI motion < 300ms */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --accent: #C8553D;
+  --ink: #1F1D1B;
+  --muted: #6F6A64;
+  --line: #E6E1DA;
+  --card: #FFFFFF;
+}
+
+.block-container { padding-top: 1.4rem; max-width: 1500px; }
+header[data-testid="stHeader"] { background: transparent; }
+
+.panel-title {
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 0.6rem;
+}
+.brand { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.4rem; }
+.brand h1 { font-size: 1.35rem; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+.brand span { color: var(--muted); font-size: 0.85rem; }
+
+/* Chat bubbles enter with @starting-style: opacity + small translate, never scale(0) */
+.msg {
+  border: 1px solid var(--line); background: var(--card);
+  border-radius: 12px; padding: 0.6rem 0.8rem; margin-bottom: 0.5rem;
+  font-size: 0.9rem; line-height: 1.4;
+  opacity: 1; transform: translateY(0);
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+  @starting-style { opacity: 0; transform: translateY(6px); }
+}
+.msg.user { background: #F1ECE6; margin-left: 1.5rem; }
+.msg.ai { margin-right: 1.5rem; }
+
+/* Proposal card: enters like a message; rows stagger 50ms apart via transition-delay.
+   Transitions (not keyframes) so it retargets cleanly if a rerun interrupts it. */
+.proposal {
+  border: 1px solid var(--accent); border-radius: 12px; padding: 0.7rem 0.9rem;
+  background: #FFF8F5; margin: 0.4rem 0 0.6rem;
+  opacity: 1; transform: translateY(0);
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+  @starting-style { opacity: 0; transform: translateY(6px); }
+}
+.proposal .tag { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; color: var(--accent); }
+.proposal ul { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.proposal li {
+  font-size: 0.88rem; opacity: 1; transform: translateY(0);
+  transition: opacity 240ms var(--ease-out), transform 240ms var(--ease-out);
+  @starting-style { opacity: 0; transform: translateY(6px); }
+}
+.proposal li:nth-child(1) { transition-delay: 0ms; }
+.proposal li:nth-child(2) { transition-delay: 50ms; }
+.proposal li:nth-child(3) { transition-delay: 100ms; }
+.proposal li:nth-child(n+4) { transition-delay: 150ms; }
+
+/* Layout hints under the room view: enter like messages, stagger 50ms */
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem; }
+.chip {
+  font-size: 0.82rem; border-radius: 999px; padding: 0.25rem 0.7rem;
+  border: 1px solid var(--line); background: var(--card);
+  opacity: 1; transform: translateY(0);
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+  @starting-style { opacity: 0; transform: translateY(6px); }
+}
+.chip.warn { border-color: var(--accent); background: #FFF1EC; color: #9A3A26; }
+.chip.ok { border-color: #BFD8C7; background: #F1F8F3; color: #2F6B45; }
+.chip:nth-child(2) { transition-delay: 50ms; }
+.chip:nth-child(3) { transition-delay: 100ms; }
+.chip:nth-child(n+4) { transition-delay: 150ms; }
+
+/* Buttons: explicit properties (never `transition: all`), press feedback scale(0.97) */
+.stButton > button {
+  border-radius: 10px; border: 1px solid var(--line); background: var(--card);
+  transition: transform 160ms var(--ease-out), background-color 160ms ease, border-color 160ms ease;
+}
+.stButton > button:active { transform: scale(0.97); }
+.stButton > button[kind="primary"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (hover: hover) and (pointer: fine) {
+  .stButton > button:hover { border-color: var(--accent); }
+  .stButton > button[kind="primary"]:hover { background: #B24A34; }
+}
+
+input, textarea, [data-baseweb="select"] > div {
+  transition: box-shadow 160ms ease, border-color 160ms ease !important;
+}
+
+iframe { border-radius: 14px; border: 1px solid var(--line); }
+
+/* Reduced motion: keep the opacity fade (it aids comprehension), drop the movement */
+@media (prefers-reduced-motion: reduce) {
+  .msg, .proposal, .proposal li, .chip {
+    transform: none !important;
+    transition-property: opacity !important;
+    @starting-style { opacity: 0; transform: none; }
+  }
+  .stButton > button:active { transform: none; }
+}
